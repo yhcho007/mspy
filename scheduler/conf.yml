@@ -1,0 +1,9 @@
+logging:
+  path: logs/app.log
+  format: "[%(asctime)s][%(filename)s:%(lineno)d] %(message)s"
+oracle:
+  user: your_user
+  password: your_pass
+  dsn: your_dsn
+mattermost:
+  webhook_url: https://mattermost.example.com/hooks/xxxx
