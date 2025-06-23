@@ -1,13 +1,14 @@
 import os, sys
 import openpyxl
 import requests
-from common import db, logger
+from common.logger import app_logger
+from common import db
 
 WEBHOOK_URL = "https://mattermost.example.com/hooks/your_webhook_id"
 
 if __name__ == "__main__":
     scheduler_id, exec_time = sys.argv[1], sys.argv[2]
-    logger.info(f"Running {scheduler_id} at {exec_time}")
+    app_logger.info(f"Running {scheduler_id} at {exec_time}")
 
     conn = db.get_connection()
     cur = conn.cursor()
@@ -44,7 +45,7 @@ if __name__ == "__main__":
         cur.execute("INSERT INTO B (log_time, scheduler_id, scheduler_name, status, message) VALUES (SYSDATE, :1, (SELECT scheduler_name FROM A WHERE scheduler_id=:1), 'DONE', 'Success')", [scheduler_id])
         conn.commit()
     except Exception as e:
-        logger.error(str(e))
+        app_logger.error(str(e))
         cur.execute("INSERT INTO B (log_time, scheduler_id, scheduler_name, status, message) VALUES (SYSDATE, :1, (SELECT scheduler_name FROM A WHERE scheduler_id = :1), 'ERROR', :2)", [scheduler_id, str(e)])
         conn.commit()
     finally:

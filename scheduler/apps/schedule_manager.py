@@ -12,9 +12,8 @@ from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from croniter import croniter
-from common.logger import logger
+from common.logger import mgr_logger
 from common import db
-
 
 app = FastAPI(title="Oracle Scheduler API")
 scheduler = BackgroundScheduler()
@@ -27,14 +26,14 @@ class ScheduleInput(BaseModel):
     query: str
 
 class ScheduleDeleteRequest(BaseModel):
-    scheduler_ids: List[str]  # 하나 이상 받기
+    scheduler_ids: List[int]  # 하나 이상 받기
     start_time: Optional[str] = None  # 'YYYY-MM-DD HH24:MI:SS'
     end_time: Optional[str] = None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Loading existing scheduled tasks from DB...")
+@app.on_event("startup")
+async def startup_event():
+    mgr_logger.info("Loading existing scheduled tasks from DB...")
     conn = db.get_connection()
     cur = conn.cursor()
     try:
@@ -47,7 +46,10 @@ async def lifespan(app: FastAPI):
             def job(exec_time=exec_time, sid=scheduler_id):
                 subprocess.Popen(["python", "apps/app.py", sid, time_str], env=os.environ.copy())
 
-            scheduler.add_job(job, trigger=DateTrigger(run_date=exec_time), id=f"{scheduler_id}_{exec_time}")
+            job = scheduler.add_job(job, trigger=DateTrigger(run_date=exec_time), id=f"{scheduler_id}_{exec_time}")
+            mgr_logger.info(f"add_job job:{job}")
+    except Exception as e:
+        mgr_logger.error(f"lifespan error: {str(e)}")
     finally:
         cur.close()
         conn.close()
@@ -57,7 +59,6 @@ async def lifespan(app: FastAPI):
 
 @app.post("/schedule/register")
 def register_schedule(req: ScheduleInput):
-    scheduler_id = str(uuid.uuid4())
     now = datetime.now()
     future_times = []
     try:
@@ -68,6 +69,7 @@ def register_schedule(req: ScheduleInput):
                 break
             future_times.append(next_time)
     except Exception as e:
+        mgr_logger.error(f"register_schedule error: {str(e)}")
         raise HTTPException(400, detail=f"Invalid cron expression: {str(e)}")
 
     conn = db.get_connection()
@@ -75,20 +77,28 @@ def register_schedule(req: ScheduleInput):
     try:
         for exec_time in future_times:
             cur.execute("""
-                INSERT INTO A (scheduler_id, scheduler_name, created_by, exec_time, query, status, created_at)
-                VALUES (:1, :2, :3, :4, :5, 'REGISTERED', SYSDATE)
-            """, [scheduler_id, req.scheduler_name, req.created_by, exec_time, req.query])
+                INSERT INTO A (scheduler_name, created_by, exec_time, query, status, created_at)
+                VALUES (:1, :2, :3, :4, 'REGISTERED', SYSDATE)
+            """, [req.scheduler_name, req.created_by, exec_time, req.query])
+            conn.commit()
+            cur.execute("SELECT scheduler_id FROM A WHERE scheduler_name = :1 "
+                        "AND created_by = :2 AND exec_time = :3 ORDER BY CREATED_AT DESC",
+                        [req.scheduler_name, req.created_by, exec_time])
+            row = cur.fetchone()
+            scheduler_id = row[0]
 
             def job(exec_time=exec_time, sid=scheduler_id):
-                subprocess.Popen(["python", "apps/app.py", sid, exec_time.strftime("%Y-%m-%d %H:%M:%S")], env=os.environ.copy())
+                subprocess.Popen(["python", "-m", "apps.app", sid, exec_time.strftime("%Y-%m-%d %H:%M:%S")], env=os.environ.copy())
 
             if exec_time <= now:
                 job()
             else:
                 scheduler.add_job(job, trigger=DateTrigger(run_date=exec_time), id=f"{scheduler_id}_{exec_time}")
 
-        conn.commit()
+
         return {"scheduler_id": scheduler_id, "count": len(future_times)}
+    except Exception as e:
+        mgr_logger.error(f"register_schedule error: {str(e)}")
     finally:
         cur.close()
         conn.close()
@@ -137,7 +147,8 @@ def search_schedule(
             results.append(row_dict)
 
         return results
-
+    except Exception as e:
+        mgr_logger.error(f"search_schedule error: {str(e)}")
     finally:
         cur.close()
         conn.close()
@@ -189,7 +200,8 @@ def kill_schedule(scheduler_id: str, user: str):
             "message": f"Scheduler {scheduler_id} killed.",
             "terminated_processes": killed_processes
         }
-
+    except Exception as e:
+        mgr_logger.error(f"kill_schedule error: {str(e)}")
     finally:
         cur.close()
         conn.close()
@@ -255,10 +267,10 @@ def delete_schedules(req: ScheduleDeleteRequest):
             "deleted_count": len(rows),
             "deleted_scheduler_ids": list(set([r[0] for r in rows]))
         }
-
+    except Exception as e:
+        mgr_logger.error(f"delete_schedules error: {str(e)}")
     finally:
         cur.close()
         conn.close()
-
 
 

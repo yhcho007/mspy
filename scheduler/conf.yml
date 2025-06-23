@@ -1,6 +1,7 @@
 log:
-  path: logs/app.log
-  format: "%(asctime)s||%(filename)s:%(lineno)d||%(message)s"
+  mgr_log_path: logs/mgr
+  app_log_path: logs/app
+  format: "%(asctime)s|%(filename)s:%(lineno)d|%(message)s"
 db:
   user: 'testcho'
   password: '1234'
