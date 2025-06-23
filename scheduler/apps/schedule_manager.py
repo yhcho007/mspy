@@ -19,7 +19,7 @@ scheduler.start()
 class ScheduleInput(BaseModel):
     scheduler_name: str
     created_by: str
-    cron_expr: str
+    cron_expr: "str 예) 분(*:모든or0~59) 시(*:모든or0~23) 일(*:모든or1~31) 월(*:모드or1~12) 요일(*:모든or0:일요일~6:토요일))"
     query: str
 
 class ScheduleQuery(BaseModel):
