@@ -2,8 +2,8 @@ logging:
   path: logs/app.log
   format: "[%(asctime)s][%(filename)s:%(lineno)d] %(message)s"
 oracle:
-  user: your_user
-  password: your_pass
-  dsn: your_dsn
+  user: 'testcho'
+  password: '1234'
+  dsn: '127.0.0.1:1521/FREE'
 mattermost:
   webhook_url: https://mattermost.example.com/hooks/xxxx
