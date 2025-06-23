@@ -1,7 +1,12 @@
 ## 🔧스케줄러 예제
 
-## 🔧 구조
-'bash
+Oracle DB, OpenAPI/Swagger, 스케줄링, 강제 종료, Excel 첨부, Mattermost 전송 등 필요한 기능들이 포함되어 있습니다. 비동기 백그라운드 스케줄러로 `apscheduler`를 사용하였습니다.
+
+---
+
+## 📁 스케줄러 디렉토리 구조
+
+```
 scheduler/
 ├── __init__.py
 ├── conf.yml
@@ -14,7 +19,9 @@ scheduler/
 │   ├── schedule_manager.py
 │   └── app.py
 logs/
-'
+```
+
+---
 ## 🔧 스케줄러 실행 방법
 
 1. `pip install fastapi uvicorn apscheduler oracledb openpyxl pyyaml requests`
