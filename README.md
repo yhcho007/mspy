@@ -44,6 +44,7 @@ CREATE TABLE target_table(col1 VARCHAR2(100), col2 VARCHAR2(100));
 3. 메인 실행:
 
 ```bash
+scheduler 디렉토리에서 다음과 같이 실행한다.
 uvicorn apps.schedule_manager:app --reload
 ```
 
