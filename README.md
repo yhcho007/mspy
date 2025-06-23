@@ -82,3 +82,46 @@ uvicorn apps.schedule_manager:app --reload
 Swagger UI에서 스펙 문서 확인 가능 (`http://localhost:8000/docs`).
 
 ---
+
+4 참고.
+루프를 돌면서 insert 하는 SQL 예제
+```bash
+
+DECLARE
+    v_today DATE := TRUNC(SYSDATE);  -- 오늘 날짜 (시각 제거)
+    v_last_ddseq NUMBER;             -- 마지막 DDSEQ 값을 저장할 변수
+    v_new_ddseq NUMBER := 0;         -- 새로 생성될 DDSEQ 값
+BEGIN
+    -- 1. 오늘 날짜에 이미 삽입된 데이터 삭제 (DD가 오늘 날짜인 경우)
+    DELETE FROM A
+    WHERE DD = TO_CHAR(v_today, 'YYYYMMDD');
+    COMMIT;
+
+    -- 2. 오늘 날짜에 마지막 DDSEQ 값을 찾기 (이미 입력된 가장 큰 DDSEQ 값)
+    SELECT NVL(MAX(DDSEQ), 0)
+    INTO v_last_ddseq
+    FROM A
+    WHERE DD = TO_CHAR(v_today, 'YYYYMMDD');
+
+    -- 3. 새로 삽입할 DDSEQ 값을 설정 (마지막 DDSEQ 이후부터 10000건 추가)
+    v_new_ddseq := v_last_ddseq + 1;
+
+    -- 4. 1000건을 삽입하는 루프 (DD, DT, DDSEQ)
+    FOR i IN 1..1000 LOOP
+        INSERT INTO A (DD, DT, DDSEQ)
+        VALUES (
+            TO_CHAR(v_today, 'YYYYMMDD'),  -- 오늘 날짜 (YYYYMMDD 형식)
+            TO_CHAR(SYSDATE, 'HH24MISS'), -- 현재 시간 (HH24MISS 형식)
+            v_new_ddseq                    -- 새로 생성된 DDSEQ 값
+        );
+        v_new_ddseq := v_new_ddseq + 1;  -- DDSEQ 값 증가
+    END LOOP;
+
+    COMMIT;
+END;
+/
+
+
+```
+
+
