@@ -1,12 +1,11 @@
-import logging, yaml
-from pathlib import Path
+import logging
+import yaml
 
-conf = yaml.safe_load(open(Path(__file__).parent.parent/"conf.yml"))
-log_conf = conf["logging"]
+with open("conf.yml") as f:
+    config = yaml.safe_load(f)
 
-logging.basicConfig(
-    filename=log_conf["path"],
-    format=log_conf["format"],
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+log_path = config['log']['path']
+log_format = config['log']['format']
+
+logging.basicConfig(filename=log_path, level=logging.INFO, format=log_format)
+logger = logging.getLogger("scheduler")
