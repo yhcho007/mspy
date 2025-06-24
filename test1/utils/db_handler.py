@@ -1,43 +1,72 @@
-# utils/db_handler.py
+import oracledb
+from datetime import datetime
+
 class DbHandler:
     def __init__(self, config):
-        import oracledb
-        self.conn = oracledb.connect(user=config['db']['user'],
-                                     password=config['db']['password'],
-                                     dsn=config['db']['dsn'])
-
-    def get_schedule(self, job_id):
-        cur = self.conn.cursor()
-        cur.execute("SELECT * FROM A WHERE scheduler_id = :1", [job_id])
-        row = cur.fetchone()
-        if row:
-            return dict(zip([d[0].lower() for d in cur.description], row))
-        return None
+        self.config = config
+        self.conn = oracledb.connect(
+            user=config['db']['user'],
+            password=config['db']['password'],
+            dsn=config['db']['dsn'],
+            encoding="UTF-8"
+        )
 
     def insert_schedule(self, data):
+        sql = """
+            INSERT INTO A (scheduler_name, created_by, exec_time, query, status)
+            VALUES (:1, :2, :3, :4, 'REGISTERED')
+            RETURNING scheduler_id INTO :5
+        """
         cur = self.conn.cursor()
-        id_var = cur.var(int)
-        cur.execute("INSERT INTO A (scheduler_name, created_by, exec_time, query, status) VALUES (:1, :2, :3, :4, 'REGISTERED') RETURNING scheduler_id INTO :5", [
-            data['scheduler_name'], data['created_by'], data['exec_time'], data['query'], id_var])
+        id_var = cur.var(oracledb.NUMBER)
+        cur.execute(sql, [
+            data['scheduler_name'],
+            data['created_by'],
+            datetime.fromisoformat(data['exec_time']),
+            data['query'],
+            id_var
+        ])
         self.conn.commit()
-        return id_var.getvalue()
+        return int(id_var.getvalue())
 
-    def update_status(self, job_id, status):
+    def get_schedule(self, scheduler_id):
+        sql = "SELECT * FROM A WHERE scheduler_id = :1"
         cur = self.conn.cursor()
-        cur.execute("UPDATE A SET status = :1 WHERE scheduler_id = :2", [status, job_id])
-        self.conn.commit()
-
-    def get_pid(self, job_id):
-        cur = self.conn.cursor()
-        cur.execute("SELECT message FROM B WHERE scheduler_id = :1 AND status = 'RUN' ORDER BY log_time DESC", [job_id])
+        cur.execute(sql, [scheduler_id])
         row = cur.fetchone()
-        if row and "PID=" in row[0]:
-            return int(row[0].split("PID=")[-1])
+        if row:
+            col_names = [d[0].lower() for d in cur.description]
+            return dict(zip(col_names, row))
         return None
 
-    def save_pid(self, job_id, pid):
+    def update_status(self, scheduler_id, status):
+        sql = "UPDATE A SET status = :1 WHERE scheduler_id = :2"
         cur = self.conn.cursor()
-        cur.execute("INSERT INTO B (scheduler_id, status, message) VALUES (:1, 'RUN', :2)", [job_id, f"PID={pid}"])
+        cur.execute(sql, [status, scheduler_id])
         self.conn.commit()
 
+    def get_logs_for_schedule(self, scheduler_id):
+        sql = "SELECT log_time, status, message FROM B WHERE scheduler_id = :1 ORDER BY log_time DESC"
+        cur = self.conn.cursor()
+        cur.execute(sql, [scheduler_id])
+        logs = []
+        for row in cur.fetchall():
+            logs.append({
+                'log_time': row[0].strftime("%Y-%m-%d %H:%M:%S"),
+                'status': row[1],
+                'message': row[2]
+            })
+        return logs
 
+    def get_schedules_in_time_range(self, start_time, end_time, status_filter=None):
+        sql = "SELECT * FROM A WHERE exec_time BETWEEN :1 AND :2"
+        params = [start_time, end_time]
+        if status_filter:
+            sql += " AND status = :3"
+            params.append(status_filter)
+
+        cur = self.conn.cursor()
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+        col_names = [d[0].lower() for d in cur.description]
+        return [dict(zip(col_names, row)) for row in rows]
