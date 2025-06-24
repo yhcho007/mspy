@@ -21,7 +21,7 @@ CREATE TABLE B (
 );
 oracle DB접속정보, 메타모스트URL, file업로드서버UEL, 로그디렉토리 등은 별도의 yml 파일을 읽어서, 환경변수로 dev,test,prod 에따라 main.py 와 app.py 에서 읽어 들여 처리하도록 해.
 
-A 테이블에 exec_time 에 동시에 1000개이상 app.py 프로세스가 동시 또는 순차적으로 기동할수있도록, oracledb, Apscheduler를 이용해서 코드를 만들어줘. 
+A 테이블에 미래 시간의 exec_time 을 등록하면, main.py 에서 백그라운드로 A 테이블 exec_time 가 5초전이면 app.py 프로세스를 대기시키고 exec_time 정각에 프로세스를 기동시키도록 수정해줘. 동시에 1000개이상 app.py 프로세스도 exec_time가 동일하면 동시에 기동하고, 또는 exec_time에 기동할수있도록, subpprocess는 사용하지말고, oracledb, Apscheduler, ThreadPoolExecutor 를 이용해서 코드를 만들어줘.
 
 main.py 는 TaskManagement 클래스로 만들어주고, app.py 는 TaskRunner 클래스로 만들어줘.
 로그처리는 1일 단위로 로그파일을 만들고, 로그처리 함수는 LogHandler 클래서에서,
