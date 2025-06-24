@@ -1,4 +1,7 @@
-좋습니다. `cx_Oracle` 대신 [**oracledb**](https://python-oracledb.readthedocs.io/en/latest/) 패키지를 사용하도록 코드를 수정해드리겠습니다.
+가장 정밀하고 실용적인 방법은 multiprocessing.Pool을 사용하여, 
+실행 직전까지 대기하다가 정각에 subprocess.Popen()을 병렬로 날리는 방식입니다.
+이 방식은 1000개 이상의 작업도 OS 한계 내에서 실제로 동시 실행할 수 있는 구조입니다.
+ulimit 설정 조정이 필요 합니다.
 `oracledb`는 `cx_Oracle`의 공식 후속 패키지이며, Python 3.7+ 이상에서 더 가볍고 설치가 쉬운 구조입니다.
 
 ---
