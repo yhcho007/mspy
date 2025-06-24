@@ -31,6 +31,8 @@ class TaskManagement:
             log_handler.log(job_id, None, "STARTED", f"app.py launched for job {job_id}")
         except Exception as e:
             log_handler.log(job_id, None, "ERROR", f"Failed to launch app.py: {str(e)}")
+        finally:
+            self.scheduled_jobs.remove(job_id)
 
     def schedule_task(self, job_id, exec_time):
         if job_id in self.scheduled_jobs:
