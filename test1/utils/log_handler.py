@@ -1,18 +1,37 @@
-# utils/log_handler.py
-import logging
-import os
 from datetime import datetime
+import logging
+from logging.handlers import TimedRotatingFileHandler
+import os
 
 class LogHandler:
-    def __init__(self, config):
-        log_dir = config['log_dir']
-        os.makedirs(log_dir, exist_ok=True)
-        today = datetime.now().strftime("%Y-%m-%d")
-        self.logger = logging.getLogger("scheduler")
-        handler = logging.FileHandler(os.path.join(log_dir, f"{today}.log"))
-        handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-        self.logger.addHandler(handler)
+    def __init__(self, cfg, sid=None):
+        self.log_dir = cfg['log_dir']
+        self.log_formatter = cfg['log_format']
+        os.makedirs(self.log_dir, exist_ok=True)
+        self.logger = logging.getLogger('TaskLogger')  if sid is None else \
+            logging.getLogger(f'AppLogger-{sid}')
         self.logger.setLevel(logging.INFO)
+        self.log_file_name = f'main_{datetime.now().strftime("%Y%m%d")}.log' if sid is None else \
+            f'app_{sid}_{datetime.now().strftime("%Y%m%d")}.log'
 
-    def log(self, job_id, job_name, status, msg):
-        self.logger.info(f"[{job_id}] {job_name or ''} - {status}: {msg}")
+        fmt = logging.Formatter(self.log_formatter)
+
+        fh = TimedRotatingFileHandler(
+            os.path.join(self.log_dir, self.log_file_name),
+            when='midnight',
+            backupCount=7,
+            encoding='utf-8'
+        )
+        fh.setFormatter(fmt)
+        self.logger.addHandler(fh)
+        '''
+        ch = logging.StreamHandler()
+        ch.setFormatter(fmt)
+        self.logger.addHandler(ch)
+        '''
+
+    def info(self, msg):
+        self.logger.info(msg)
+
+    def error(self, msg):
+        self.logger.error(msg)

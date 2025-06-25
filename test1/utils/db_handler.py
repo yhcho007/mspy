@@ -2,71 +2,83 @@ import oracledb
 from datetime import datetime
 
 class DbHandler:
-    def __init__(self, config):
-        self.config = config
-        self.conn = oracledb.connect(
-            user=config['db']['user'],
-            password=config['db']['password'],
-            dsn=config['db']['dsn'],
-            encoding="UTF-8"
-        )
+    def __init__(self, cfg):
+        self.pool = oracledb.create_pool(min=1, max=100, **cfg)
+        self.log = None
 
-    def insert_schedule(self, data):
-        sql = """
-            INSERT INTO A (scheduler_name, created_by, exec_time, query, status)
-            VALUES (:1, :2, :3, :4, 'REGISTERED')
-            RETURNING scheduler_id INTO :5
-        """
-        cur = self.conn.cursor()
-        id_var = cur.var(oracledb.NUMBER)
-        cur.execute(sql, [
-            data['scheduler_name'],
-            data['created_by'],
-            datetime.fromisoformat(data['exec_time']),
-            data['query'],
-            id_var
-        ])
-        self.conn.commit()
-        return int(id_var.getvalue())
+    def setlog(self,log):
+        self.log = log
 
-    def get_schedule(self, scheduler_id):
-        sql = "SELECT * FROM A WHERE scheduler_id = :1"
-        cur = self.conn.cursor()
-        cur.execute(sql, [scheduler_id])
-        row = cur.fetchone()
-        if row:
-            col_names = [d[0].lower() for d in cur.description]
-            return dict(zip(col_names, row))
-        return None
+    def insert_schedule(self, s):
+        with self.pool.acquire() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO A(SCHEDULER_NAME, CREATED_BY, EXEC_TIME, QUERY, STATUS)
+                VALUES (:1, :2, :3, :4, 'REGISTERED')
+                RETURNING scheduler_id INTO :id
+            """, [s.scheduler_name, s.created_by, s.exec_time, s.query,], id=cur.var(int))
+            conn.commit()
+            return cur.getimplicitresults()[0] if hasattr(cur, 'getimplicitresults') else cur.fetchone()[0]
 
-    def update_status(self, scheduler_id, status):
-        sql = "UPDATE A SET status = :1 WHERE scheduler_id = :2"
-        cur = self.conn.cursor()
-        cur.execute(sql, [status, scheduler_id])
-        self.conn.commit()
+    def get_schedule(self, sid):
+        with self.pool.acquire() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT SCHEDULER_ID, SCHEDULER_NAME, EXEC_TIME, QUERY, STATUS FROM A WHERE SCHEDULER_ID=:1", [sid])
+            row = cur.fetchone()
+            if not row: return None
+            return dict(zip([d[0].lower() for d in cur.description], row))
 
-    def get_logs_for_schedule(self, scheduler_id):
-        sql = "SELECT log_time, status, message FROM B WHERE scheduler_id = :1 ORDER BY log_time DESC"
-        cur = self.conn.cursor()
-        cur.execute(sql, [scheduler_id])
-        logs = []
-        for row in cur.fetchall():
-            logs.append({
-                'log_time': row[0].strftime("%Y-%m-%d %H:%M:%S"),
-                'status': row[1],
-                'message': row[2]
-            })
-        return logs
+    def list_schedules(self):
+        with self.pool.acquire() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT SCHEDULER_ID, SCHEDULER_NAME, EXEC_TIME, STATUS FROM A")
+            cols = [d[0].lower() for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur]
 
-    def get_schedules_in_time_range(self, start_time, end_time, status_filter=None):
-        sql = "SELECT * FROM A WHERE exec_time BETWEEN :1 AND :2"
-        params = [start_time, end_time]
-        if status_filter:
-            sql += " AND status = :3"
-            params.append(status_filter)
+    def update_status(self, sid, status):
+        with self.pool.acquire() as conn:
+            conn.cursor().execute("UPDATE A SET STATUS=:1 WHERE SCHEDULER_ID=:2", [status, sid])
+            conn.commit()
 
-        cur = self.conn.cursor()
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        col_names = [d[0].lower() for d in cur.description]
-        return [dict(zip(col_names, row)) for row in rows]
+    def insert_log(self, sid, status, message):
+        with self.pool.acquire() as conn:
+            cur = conn.cursor()
+            sql = f"""
+                INSERT INTO B(SCHEDULER_ID, SCHEDULER_NAME, STATUS, MESSAGE) 
+                VALUES ({sid},
+                  (SELECT SCHEDULER_NAME FROM A WHERE SCHEDULER_ID={sid}),
+                  '{status}', '{message}')
+            """
+            self.log.info(f"insert_log sql: {sql}")
+            cur.execute(sql)
+            conn.commit()
+
+    def fetch_query(self, sql):
+        with self.pool.acquire() as conn:
+            if sql:
+                cur = conn.cursor()
+                cur.execute(sql)
+                return cur.fetchall()
+            else:
+                return None
+
+    def get_schedules_between(self, start, end) :
+        sql = f"""
+                SELECT SCHEDULER_ID, EXEC_TIME FROM A
+                WHERE EXEC_TIME BETWEEN TO_TIMESTAMP('{start}', 'YYYY-MM-DD HH24:MI:SS.FF6')
+                                   AND TO_TIMESTAMP('{end}', 'YYYY-MM-DD HH24:MI:SS.FF6')
+                AND status = 'REGISTERED'
+                """
+        #self.log.info(f"get_schedules_between sql: {sql}")
+        reslist = None
+        with self.pool.acquire() as conn:
+            cur = conn.cursor()
+            cur.execute(sql)
+            # cur.execute(sql, [start, end])
+            rows = cur.fetchall()
+            columns = [col[0] for col in cur.description]
+            reslist = [dict(zip(columns, row)) for row in rows]
+        #self.log.info(f"get_schedules_between reslist: {reslist}")
+        return reslist
+
+
