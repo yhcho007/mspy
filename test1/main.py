@@ -19,10 +19,17 @@ with open(f"config/{env}.yml", encoding="utf-8") as f:
 db = DbHandler(cfg['oracle'])
 log = LogHandler(cfg['log'])
 db.setlog(log)
-executor = ThreadPoolExecutor(max_workers=10000)
+executor = ThreadPoolExecutor(max_workers=1000)
 
 # FastAPI 앱
-app = FastAPI(title="Scheduler API", version="1.0")
+app = FastAPI(
+    title="Scheduler API",
+    description="An API for managing and executing scheduled database queries.",
+    version="1.0",
+    docs_url="/docs",  # Swagger UI
+    redoc_url="/redoc",  # ReDoc documentation
+    openapi_url="/openapi.json"  # OpenAPI spec path
+)
 
 # APScheduler
 sched = BackgroundScheduler(job_defaults={
@@ -38,25 +45,35 @@ class ScheduleIn(BaseModel):
     exec_time: datetime
     query: str
 
-@app.get("/health")
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "scheduler_name": "DailyReport",
+                "created_by": "admin",
+                "exec_time": "2025-06-26T15:00:00",
+                "query": "SELECT * FROM report_table"
+            }
+        }
+
+@app.get("/health", summary="Check API health", description="Returns the health status of the API.")
 def health():
     return {"status": "ok"}
 
-@app.post("/schedule")
+@app.post("/schedule", summary="Create a new schedule", description="Schedules a new task to be executed at a specific time.")
 def create(s: ScheduleIn):
     sid = db.insert_schedule(s)
     log.info(f"Inserted schedule {sid}")
     sched.add_job(lambda sid=sid: executor.submit(run_task, sid), trigger="date", run_date=s.exec_time, id=str(sid))
     return {"scheduler_id": sid}
 
-@app.get("/schedule/{sid}")
+@app.get("/schedule/{sid}", summary="Get schedule status", description="Retrieves the current status of a scheduled task.")
 def get_status(sid: int):
     rec = db.get_schedule(sid)
     if not rec:
         raise HTTPException(status_code=404, detail="Schedule not found")
     return rec
 
-@app.delete("/schedule/{sid}")
+@app.delete("/schedule/{sid}", summary="Delete (kill) a schedule", description="Stops the scheduled task if it's still pending.")
 def delete(sid: int):
     db.update_status(sid, "KILLED")
     try:
@@ -66,9 +83,10 @@ def delete(sid: int):
     log.info(f"Killed schedule {sid}")
     return {"status": "killed"}
 
-@app.get("/schedule", response_model=List[dict])
+@app.get("/schedule", response_model=List[dict], summary="List all schedules", description="Returns a list of all scheduled tasks.")
 def list_schedules():
     return db.list_schedules()
+
 
 # ▶️ 작업 실행 함수 (스레드 기반 실행)
 def run_task(sid: int):
@@ -103,6 +121,8 @@ def schedule_scanner():
                         id=job_id,
                         args=[job["SCHEDULER_ID"]]
                     )
+                    db.update_status(job_id, "RUN")
+                    db.insert_log(job_id, "RUN", f"RUN {job_id}")
                     log.info(f"{i} - Scheduled job {job_id} at {job['EXEC_TIME']}")
         except Exception as e:
             log.error(f"schedule_scanner error: {traceback.format_exc()}")

@@ -32,36 +32,34 @@ class TaskRunner:
 
     def run(self):
         try:
-            self.db.update_status(self.sid, "RUN")
             self.log.info(f"App {self.sid} --1--")
-            self.db.insert_log(self.sid, "RUN", f"RUN {self.sid}")
-            self.log.info(f"App {self.sid} --2--")
             rec = self.db.get_schedule(self.sid)
-            self.log.info(f"App {self.sid} --2.5-- rec:{rec}")
+            self.log.info(f"App {self.sid} --1.5-- rec:{rec}")
             sqltxt = None
             if isinstance(rec['query'], oracledb.LOB):
                 sqltxt = self.to_clean_sql(rec['query'].read()) if rec['query'] is not None else None
-            self.log.info(f"App {self.sid} --3-- QUERY:{sqltxt}")
+            # self.log.info(f"App {self.sid} --2-- QUERY:{sqltxt}")
             rows = self.db.fetch_query(sqltxt)
-            self.log.info(f"App {self.sid} --4--")
+            # self.log.info(f"App {self.sid} --3--")
             safe_name = self.safe_filename(rec['scheduler_name'])
             path = f"{safe_name}_{self.sid}.xlsx"
             file_path = os.path.join(self.output_file_path, path)
-            self.log.info(f"App {self.sid} --5-- file_path:{file_path}")
+            #self.log.info(f"App {self.sid} --4-- file_path:{file_path}")
             wb = openpyxl.Workbook()
             ws = wb.active
             for r in rows:
                 ws.append(r)
             wb.save(file_path)
-            self.log.info(f"App {self.sid} --6--")
-            files = {'file': open(file_path, 'rb')}
+            self.log.info(f"App {self.sid} --5--")
+            '''
+            files = {'file': open(file_path, 'rb')}            
             requests.post(self.mm_url, files=files, data={'msg': file_path})
             requests.post(self.fs_url, files=files)
             self.log.info(f"App {self.sid} --7--")
+            '''
             self.db.insert_log(self.sid, "SUCCESS", f"Saved to {file_path}")
             self.db.update_status(self.sid, "DONE")
-            self.log.info(f"Task {self.sid} DONE")
-            self.log.info(f"App {self.sid} --8--")
+            self.log.info(f"Task {self.sid} --8-- DONE")
             return
         except Exception as e:
             self.db.insert_log(self.sid, "ERROR", str(e))
