@@ -1,14 +1,13 @@
-import os, yaml, psutil, time, threading
+import os, yaml, psutil, time, threading, traceback
 import uvicorn
-import traceback
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from concurrent.futures import ThreadPoolExecutor
+from typing import List
 from utils.db_handler_pool import DbHandlerPool
 from utils.log_handler import LogHandler
-from typing import List
 from threadapp.app import TaskRunner
 
 # 설정
@@ -18,26 +17,17 @@ with open(f"config/{env}.yml", encoding="utf-8") as f:
 db = DbHandlerPool(cfg['oracle'])
 log = LogHandler(cfg['log'])
 db.setlog(log)
-executor = ThreadPoolExecutor(max_workers=1000)
 
 # FastAPI 앱
 app = FastAPI(
     title="Scheduler API",
     description="An API for managing and executing scheduled database queries.",
     version="1.0",
-    docs_url="/docs",  # Swagger UI
-    redoc_url="/redoc",  # ReDoc documentation
-    openapi_url="/openapi.json"  # OpenAPI spec path
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
 )
 
-# APScheduler
-sched = BackgroundScheduler(job_defaults={
-    "max_instances" : 100,
-    "misfire_grace_time": 60
-})
-sched.start()
-
-# 데이터 모델
 class ScheduleIn(BaseModel):
     scheduler_name: str
     created_by: str
@@ -54,104 +44,113 @@ class ScheduleIn(BaseModel):
             }
         }
 
-@app.get("/health", summary="Check API health", description="Returns the health status of the API.")
+class TaskManager:
+    def __init__(self, max_workers=1000):
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.lock = threading.Lock()
+        self.active_tasks = set()
+        self.completed_tasks = 0
+        threading.Thread(target=self._monitor_threads, daemon=True).start()
+        threading.Thread(target=self._schedule_scanner, daemon=True).start()
+        #threading.Thread(target=self._process_logger, daemon=True).start()
+
+    def run_task(self, sid: int):
+        runner = TaskRunner(sid, env, db)
+        try:
+            runner.run()
+        except Exception as e:
+            log.error(f"Task {sid} failed: {traceback.format_exc()}")
+        finally:
+            if hasattr(runner, "logHandler"):
+                log.close()
+            with self.lock:
+                self.completed_tasks += 1
+                self.active_tasks.discard(threading.current_thread())
+
+    def run_task_wrapper(self, sid: int):
+        try:
+            t = threading.Thread(target=self.run_task, args=(sid,))
+            with self.lock:
+                self.active_tasks.add(t)
+            t.start()
+        except Exception as e:
+            log.error(f"run_task_wrapper Error {sid}: {traceback.format_exc()}")
+
+    def _monitor_threads(self):
+        while True:
+            with self.lock:
+                print(f"[{datetime.now()}][Monitor] Active: {len(self.active_tasks)} | Completed: {self.completed_tasks}")
+            time.sleep(2)
+
+    def _schedule_scanner(self):
+        sched = BackgroundScheduler(job_defaults={"max_instances": 100, "misfire_grace_time": 60})
+        sched.start()
+        while True:
+            try:
+                now = datetime.now()
+                near_future = now + timedelta(seconds=15)
+                jobs = db.get_schedules_between(
+                    now.strftime("%Y-%m-%d %H:%M:%S"),
+                    near_future.strftime("%Y-%m-%d %H:%M:%S")
+                )
+                for i, job in enumerate(jobs):
+                    job_id = str(job["SCHEDULER_ID"])
+                    if not sched.get_job(job_id):
+                        sched.add_job(
+                            self.run_task_wrapper,
+                            trigger="date",
+                            run_date=job["EXEC_TIME"],
+                            id=job_id,
+                            args=[job["SCHEDULER_ID"]]
+                        )
+                        db.update_status(job_id, "RUNNING")
+                        db.insert_log(job_id, "RUNNING", f"RUNNING {job_id}")
+                        log.info(f"{i} - Scheduled job {job_id} at {job['EXEC_TIME']}")
+            except Exception as e:
+                log.error(f"schedule_scanner error: {traceback.format_exc()}")
+            time.sleep(10)
+
+    def _process_logger(self):
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                cmdline_list = proc.info.get('cmdline')
+                if not cmdline_list:
+                    continue
+                cmdline = " ".join(cmdline_list)
+                if 'python' in cmdline or 'uvicorn' in cmdline:
+                    print(f"[{proc.info['pid']}] {cmdline}")
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+# 싱글톤 인스턴스 생성
+task_manager = TaskManager()
+
+@app.get("/health")
 def health():
     return {"status": "ok"}
 
-@app.post("/schedule", summary="Create a new schedule", description="Schedules a new task to be executed at a specific time.")
+@app.post("/schedule")
 def create(s: ScheduleIn):
     sid = db.insert_schedule(s)
     log.info(f"Inserted schedule {sid}")
-    sched.add_job(lambda sid=sid: executor.submit(run_task, sid), trigger="date", run_date=s.exec_time, id=str(sid))
     return {"scheduler_id": sid}
 
-@app.get("/schedule/{sid}", summary="Get schedule status", description="Retrieves the current status of a scheduled task.")
+@app.get("/schedule/{sid}")
 def get_status(sid: int):
     rec = db.get_schedule(sid)
     if not rec:
         raise HTTPException(status_code=404, detail="Schedule not found")
     return rec
 
-@app.delete("/schedule/{sid}", summary="Delete (kill) a schedule", description="Stops the scheduled task if it's still pending.")
+@app.delete("/schedule/{sid}")
 def delete(sid: int):
     db.update_status(sid, "KILLED")
-    try:
-        sched.remove_job(str(sid))
-    except:
-        pass
     log.info(f"Killed schedule {sid}")
     return {"status": "killed"}
 
-@app.get("/schedule", response_model=List[dict], summary="List all schedules", description="Returns a list of all scheduled tasks.")
+@app.get("/schedule", response_model=List[dict])
 def list_schedules():
     return db.list_schedules()
 
-
-# ▶️ 작업 실행 함수 (스레드 기반 실행)
-def run_task(sid: int):
-    runner = TaskRunner(sid, env, db)
-    runner.run()
-
-def run_task_wrapper(sid: int):
-    try:
-        executor.submit(run_task, sid)
-    except Exception as e:
-        log.error(f"run_task_wrapper Error {sid}: {traceback.format_exc()}")
-
-# ▶️ 주기적으로 테이블에서 작업을 조회하고 등록
-def schedule_scanner():
-    while True:
-        try:
-            now = datetime.now()
-            near_future = now + timedelta(seconds=15)
-
-            jobs = db.get_schedules_between(
-                now.strftime("%Y-%m-%d %H:%M:%S"),
-                near_future.strftime("%Y-%m-%d %H:%M:%S")
-            )
-
-            for i, job in enumerate(jobs):
-                job_id = str(job["SCHEDULER_ID"])
-                if not sched.get_job(job_id):
-                    sched.add_job(
-                        run_task_wrapper,
-                        trigger="date",
-                        run_date=job["EXEC_TIME"],
-                        id=job_id,
-                        args=[job["SCHEDULER_ID"]]
-                    )
-                    db.update_status(job_id, "RUNNING")
-                    db.insert_log(job_id, "RUNNING", f"RUNNING {job_id}")
-                    log.info(f"{i} - Scheduled job {job_id} at {job['EXEC_TIME']}")
-        except Exception as e:
-            log.error(f"schedule_scanner error: {traceback.format_exc()}")
-        time.sleep(10)
-
-
-# ▶️ psutil로 python/uvicorn 프로세스 모니터링
-def process_logger():
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            cmdline_list = proc.info.get('cmdline')
-            if not cmdline_list:
-                continue
-            cmdline = " ".join(cmdline_list)
-            if 'python' in cmdline or 'uvicorn' in cmdline:
-                print(f"[{proc.info['pid']}] {cmdline}")
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-    '''
-    while True:
-        print(datetime.now())
-
-        print('---------------------------------------')
-        time.sleep(5)
-    '''
-
-# ▶️ 백그라운드 스레드 시작
-threading.Thread(target=schedule_scanner, daemon=True).start()
-threading.Thread(target=process_logger, daemon=True).start()
-
-# ▶️ FastAPI 실행
 if __name__ == "__main__":
     uvicorn.run("threadapp.main:app", host="0.0.0.0", port=8000, reload=True)

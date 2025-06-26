@@ -16,14 +16,14 @@ class LogHandler:
 
         fmt = logging.Formatter(self.log_formatter)
 
-        fh = TimedRotatingFileHandler(
+        self.fh = TimedRotatingFileHandler(
             os.path.join(self.log_dir, self.log_file_name),
             when='midnight',
             backupCount=7,
             encoding='utf-8'
         )
-        fh.setFormatter(fmt)
-        self.logger.addHandler(fh)
+        self.fh.setFormatter(fmt)
+        self.logger.addHandler(self.fh)
         '''
         ch = logging.StreamHandler()
         ch.setFormatter(fmt)
@@ -35,3 +35,10 @@ class LogHandler:
 
     def error(self, msg):
         self.logger.error(msg)
+
+    def close(self):
+        self.fh.close()
+        self.logger.removeHandler(self.fh)
+        del self.fh
+
+
