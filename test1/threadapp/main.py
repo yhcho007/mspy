@@ -1,22 +1,21 @@
-import os, yaml, sys, psutil, time, threading
+import os, yaml, psutil, time, threading
 import uvicorn
 import traceback
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from concurrent.futures import ThreadPoolExecutor
-from utils.db_handler import DbHandler
+from utils.db_handler_pool import DbHandlerPool
 from utils.log_handler import LogHandler
 from typing import List
-from app import TaskRunner
+from threadapp.app import TaskRunner
 
 # 설정
 env = os.getenv("ENV", "dev")
 with open(f"config/{env}.yml", encoding="utf-8") as f:
     cfg = yaml.safe_load(f)
-db = DbHandler(cfg['oracle'])
+db = DbHandlerPool(cfg['oracle'])
 log = LogHandler(cfg['log'])
 db.setlog(log)
 executor = ThreadPoolExecutor(max_workers=1000)
@@ -104,7 +103,7 @@ def schedule_scanner():
     while True:
         try:
             now = datetime.now()
-            near_future = now + timedelta(seconds=10)
+            near_future = now + timedelta(seconds=15)
 
             jobs = db.get_schedules_between(
                 now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -121,12 +120,12 @@ def schedule_scanner():
                         id=job_id,
                         args=[job["SCHEDULER_ID"]]
                     )
-                    db.update_status(job_id, "RUN")
-                    db.insert_log(job_id, "RUN", f"RUN {job_id}")
+                    db.update_status(job_id, "RUNNING")
+                    db.insert_log(job_id, "RUNNING", f"RUNNING {job_id}")
                     log.info(f"{i} - Scheduled job {job_id} at {job['EXEC_TIME']}")
         except Exception as e:
             log.error(f"schedule_scanner error: {traceback.format_exc()}")
-        time.sleep(5)
+        time.sleep(10)
 
 
 # ▶️ psutil로 python/uvicorn 프로세스 모니터링
@@ -155,4 +154,4 @@ threading.Thread(target=process_logger, daemon=True).start()
 
 # ▶️ FastAPI 실행
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("threadapp.main:app", host="0.0.0.0", port=8000, reload=True)
