@@ -1,5 +1,6 @@
-import os
 import re
+import time
+
 import yaml
 import traceback
 import unicodedata
@@ -19,6 +20,7 @@ class TaskRunner:
         self.sid = sid
         self.db = db
         self.log = LogHandler(cfg['log'], self.sid)
+        self.db.setlog(self.log)
         self.mm_url = cfg.get('mm_url')
         self.fs_url = cfg.get('fs_url')
 
@@ -31,11 +33,21 @@ class TaskRunner:
         sqltxt = re.sub(r'--.*?$', '', sqltxt, flags=re.MULTILINE)
         return sqltxt
 
-    def _get_schedule_record(self):
+    def _get_schedule_record(self, retry=3):
         self.log.info(f"Fetching schedule record for SID: {self.sid}")
-        rec = self.db.get_schedule(self.sid)
-        if not rec:
-            raise ValueError(f"No schedule record found for SID {self.sid}")
+        cnt =0
+        while True:
+            rec = self.db.get_schedule(self.sid)
+            if not rec:
+                time.sleep(1)
+                cnt = cnt + 1
+                rec = self.db.get_schedule(self.sid)
+                self.log.info(f"No schedule record found for SID {self.sid}. retry {cnt}")
+                if cnt > retry:
+                    self.log.error(f"No schedule record found for SID {self.sid}. retry {cnt}")
+                    break
+            else:
+                break
         return rec
 
     def _extract_sql(self, rec):
@@ -43,10 +55,25 @@ class TaskRunner:
             return self.to_clean_sql(rec['query'].read())
         return self.to_clean_sql(rec['query'])
 
-    def _fetch_data(self, sqltxt):
+    def _fetch_data(self, sqltxt, retry=3):
         if not sqltxt:
+            self.log.info("SQL query is empty or invalid")
             raise ValueError("SQL query is empty or invalid")
-        return self.db.fetch_query(sqltxt)
+        res = self.db.fetch_query(sqltxt)
+        self.log.info(f"{self.sid} _fetch_data res:{res}")
+        cnt = 0
+        while True:
+            if not res:
+                time.sleep(1)
+                cnt = cnt + 1
+                res = self.db.fetch_query(sqltxt)
+                self.log.info(f"No schedule record found for SID {self.sid}. retry {cnt}")
+                if cnt > retry:
+                    self.log.error(f"No schedule record found for SID {self.sid}. retry {cnt}")
+                    return None
+            else:
+                return res
+
 
     def _save_to_excel(self, rows, file_path):
         try:
@@ -56,35 +83,55 @@ class TaskRunner:
                 ws.append(r)
             wb.save(file_path)
         except Exception as e:
-            raise RuntimeError(f"Failed to save Excel file: {e}")
+            self.log.error(f"Failed to save Excel file:\n{traceback.format_exc()}")
 
-    def run(self):
+    def run(self, retry=3):
         try:
             self.log.info(f"[{self.sid}] Task started.")
-            self.db.update_status(self.sid, "RUNNING")
-
-            rec = self._get_schedule_record()
-            sqltxt = self._extract_sql(rec)
-            rows = self._fetch_data(sqltxt)
+            cnt = 0
+            while True:
+                rec = self._get_schedule_record()
+                self.log.info(f"[{self.sid}] rec:{rec}")
+                sqltxt = self._extract_sql(rec)
+                self.log.info(f"[{self.sid}] sqltxt:{sqltxt}")
+                rows = self._fetch_data(sqltxt)
+                self.log.info(f"[{self.sid}] rows:{rows}")
+                if rows:
+                    break
+                else:
+                    if cnt > retry:
+                        msg = f"[{self.sid}] select retry over ERROR"
+                        self.log.info(msg)
+                        self.db.insert_log(self.sid, "ERROR", msg)
+                        self.db.update_status(self.sid, "ERROR")
+                        return
+                    else:
+                        self.log.info(f"[{self.sid}] select retry:{cnt}")
+                        cnt = cnt + 1
 
             safe_name = self.safe_filename(rec['scheduler_name'])
             file_name = f"{safe_name}_{self.sid}.xlsx"
             file_path = self.output_file_path / file_name
 
             self._save_to_excel(rows, file_path)
+            self.log.info(f"[{self.sid}] Task SUCCESS. Saved to {file_path}")
+            self.db.update_status(self.sid, "SUCCESS")
+            self.db.insert_log(self.sid, "SUCCESS", f"Saved to {file_path}")
 
             # Optional: File post actions
             # self._post_file(file_path)
 
-            self.db.insert_log(self.sid, "SUCCESS", f"Saved to {file_path}")
+            self.log.info(f"[{self.sid}] Task done. File: {file_path}")
             self.db.update_status(self.sid, "DONE")
-            self.log.info(f"[{self.sid}] Task completed successfully. File: {file_path}")
-
+            self.db.insert_log(self.sid, "DONE", f"[{self.sid}] Task done.")
         except Exception as e:
             err_msg = f"[{self.sid}] Task failed: {e}"
             self.log.error(f"{err_msg}\n{traceback.format_exc()}")
             self.db.insert_log(self.sid, "ERROR", str(e))
             self.db.update_status(self.sid, "ERROR")
+        finally:
+            self.log.close()
+
 
     # Optional future enhancement
     # def _post_file(self, file_path):
