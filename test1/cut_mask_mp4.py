@@ -1,6 +1,6 @@
 import cv2
 import os
-from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
+from moviepy import (VideoFileClip, concatenate_videoclips, AudioFileClip)
 
 # ⚙️ 설정
 input_path = "SSYouTube.online_학부모설명회 YM 트렉 저니 (Trek Journey) 2021_1080p.mp4"
@@ -10,7 +10,8 @@ output_path = "output_masked.mp4"
 
 # ✂️ 삭제할 시간 구간 리스트
 cut_intervals = [
-    (0, 10)
+    (0, 10.5),
+    (288, 363)
 ]
 
 # 🎞️ 1. MoviePy로 자르기 및 오디오 포함한 영상 저장
@@ -25,7 +26,7 @@ for start, end in sorted(cut_intervals):
 if prev_end < original_clip.duration:
     keep_intervals.append((prev_end, original_clip.duration))
 
-clips_to_concatenate = [original_clip.subclip(s, e) for s, e in keep_intervals]
+clips_to_concatenate = [original_clip.subclipped(s, e) for s, e in keep_intervals]
 final_clip = concatenate_videoclips(clips_to_concatenate)
 
 # ✅ 오디오 포함해서 저장
@@ -77,7 +78,7 @@ cv2.destroyAllWindows()
 masked_clip = VideoFileClip(temp_masked_video_path)
 audio_clip = final_clip.audio  # 마스킹 전 원래 오디오
 
-final_video_with_audio = masked_clip.set_audio(audio_clip)
+final_video_with_audio = masked_clip.with_audio(audio_clip)
 final_video_with_audio.write_videofile(output_path, codec="libx264", audio_codec="aac")
 
 print(f"✅ 완료: {output_path} 에 저장되었습니다.")
