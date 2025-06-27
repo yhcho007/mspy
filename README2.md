@@ -34,3 +34,5 @@ oracledb, Apscheduler SqlAlchemyStore, ThreadPoolExecutor 를 이용해서 거�
 main.py 는 TaskManagement 클래스로 만들어주고, app.py 는 TaskRunner 클래스로 만들어줘.
 로그처리는 1일 단위로 로그파일을 만들고, 로그처리 함수는 LogHandler 클래서에서,
 DB 처리는 DbHandler 클래스에서 하도록 만들어줘.
+
+https://youtu.be/EJ2rd3FAwKQ?si=_J3SzJQrFV2QFJ8P
