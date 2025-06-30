@@ -1,5 +1,6 @@
 import os, yaml, psutil, time, threading, traceback
 import uvicorn
+import gc
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timedelta
@@ -50,6 +51,7 @@ class TaskManager:
         self.lock = threading.Lock()
         self.active_tasks = set()
         self.completed_tasks = 0
+        self.sched = None
         threading.Thread(target=self._monitor_threads, daemon=True).start()
         threading.Thread(target=self._schedule_scanner, daemon=True).start()
         #threading.Thread(target=self._process_logger, daemon=True).start()
@@ -61,8 +63,6 @@ class TaskManager:
         except Exception as e:
             log.error(f"Task {sid} failed: {traceback.format_exc()}")
         finally:
-            if hasattr(runner, "logHandler"):
-                log.close()
             with self.lock:
                 self.completed_tasks += 1
                 self.active_tasks.discard(threading.current_thread())
@@ -79,12 +79,17 @@ class TaskManager:
     def _monitor_threads(self):
         while True:
             with self.lock:
-                print(f"[{datetime.now()}][Monitor] Active: {len(self.active_tasks)} | Completed: {self.completed_tasks}")
+                job_count = 0
+                if self.sched:
+                    job_count = len(self.sched.get_jobs())
+                print(f"[{datetime.now()}]JobCount:{job_count} Active: {len(self.active_tasks)} | Completed: {self.completed_tasks}")
+                if len(self.active_tasks) == 0:
+                    self.completed_tasks = 0
             time.sleep(2)
 
     def _schedule_scanner(self):
-        sched = BackgroundScheduler(job_defaults={"max_instances": 100, "misfire_grace_time": 60})
-        sched.start()
+        self.sched = BackgroundScheduler(job_defaults={"max_instances": 100, "misfire_grace_time": 60})
+        self.sched.start()
         while True:
             try:
                 now = datetime.now()
@@ -95,8 +100,8 @@ class TaskManager:
                 )
                 for i, job in enumerate(jobs):
                     job_id = str(job["SCHEDULER_ID"])
-                    if not sched.get_job(job_id):
-                        sched.add_job(
+                    if not self.sched.get_job(job_id):
+                        self.sched.add_job(
                             self.run_task_wrapper,
                             trigger="date",
                             run_date=job["EXEC_TIME"],
